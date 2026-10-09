@@ -146,7 +146,7 @@ Then open http://127.0.0.1:8000. Compose loads optional root `.env` values and b
 
 ### Azure App Service
 
-The optional deployment workflow is **manual** and includes a compiled React frontend, the Python backend and pinned runtime dependencies. Pushing to this repository runs CI without deploying to Azure. See [Azure setup](docs/AZURE_DEPLOYMENT.md) before running the workflow.
+The connected `main_crunchweek.yml` workflow deploys **CrunchWeek** on pushes to `main`, using the Azure login configured by Deployment Center. It builds React, packages the backend, configures FastAPI startup and remote dependency installation, and checks the live API and website. The separate publish-profile workflow remains a manual alternative. See [Azure setup](docs/AZURE_DEPLOYMENT.md).
 
 ## Run checks
 

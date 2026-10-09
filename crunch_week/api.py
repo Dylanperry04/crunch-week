@@ -82,7 +82,13 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-Crunch-Week"],
 )
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(","))
+allowed_hosts = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()]
+# App Service supplies this trusted platform value. Keep custom host settings too.
+# No wildcard is needed, and no environment file has to change for Azure hosting.
+azure_hostname = os.getenv("WEBSITE_HOSTNAME", "").strip().lower()
+if azure_hostname and "*" not in azure_hostname and "/" not in azure_hostname and ":" not in azure_hostname:
+    allowed_hosts.append(azure_hostname)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(dict.fromkeys(allowed_hosts)))
 
 
 @app.exception_handler(RequestValidationError)

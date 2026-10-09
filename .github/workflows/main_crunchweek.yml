@@ -1,7 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
-
 name: Build and deploy Python app to Azure Web App - CrunchWeek
 
 on:
@@ -9,6 +5,14 @@ on:
     branches:
       - 'main'
   workflow_dispatch:
+
+concurrency:
+  group: azure-crunchweek-production
+  cancel-in-progress: false
+
+env:
+  AZURE_WEBAPP_NAME: CrunchWeek
+  AZURE_RESOURCE_GROUP: Crunchweek
 
 jobs:
   build:
@@ -24,28 +28,32 @@ jobs:
         with:
           python-version: '3.12'
 
-      # 🛠️ Local Build Section (Optional)
-      # The following section in your workflow is designed to catch build issues early on the client side, before deployment. This can be helpful for debugging and validation. However, if this step significantly increases deployment time and early detection is not critical for your workflow, you may remove this section to streamline the deployment process.
-      - name: Create and Start virtual environment and Install dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify Python code
         run: |
-          python -m venv antenv
-          source antenv/bin/activate
-          pip install -r requirements.txt
-                
-      # By default, when you enable GitHub CI/CD integration through the Azure portal, the platform automatically sets the SCM_DO_BUILD_DURING_DEPLOYMENT application setting to true. This triggers the use of Oryx, a build engine that handles application compilation and dependency installation (e.g., pip install) directly on the platform during deployment. Hence, we exclude the antenv virtual environment directory from the deployment artifact to reduce the payload size. 
+          pip install -r requirements-dev.txt
+          python -m ruff check crunch_week tests scripts
+          python -m pytest
+
+      - name: Verify and build React
+        working-directory: frontend
+        run: npm ci && npm test && npm run build
+
+      - name: Package complete application
+        run: python scripts/package_deployment.py
+
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: |
-            .
-            !antenv/
-
-      # 🚫 Opting Out of Oryx Build
-      # If you prefer to disable the Oryx build process during deployment, follow these steps:
-      # 1. Remove the SCM_DO_BUILD_DURING_DEPLOYMENT app setting from your Azure App Service Environment variables.
-      # 2. Refer to sample workflows for alternative deployment strategies: https://github.com/Azure/actions-workflow-samples/tree/master/AppService
-      
+          path: deployment.zip
+          if-no-files-found: error
+          retention-days: 3
 
   deploy:
     runs-on: ubuntu-latest
@@ -55,11 +63,13 @@ jobs:
       contents: read #This is required for actions/checkout
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
           name: python-app
-      
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -67,10 +77,28 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_C9C8D96AB3FF423BBAD072AE8297814E }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_6C8CD14CBD1D4B36BE15C6B586DC18EB }}
 
+      - name: Check app and configure FastAPI startup
+        id: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --query '{state:state,host:defaultHostName}' --output json
+          az webapp config show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --query '{runtime:linuxFxVersion,startup:appCommandLine}' --output json
+          az webapp config set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --startup-file 'bash azure-startup.sh' --output none
+          az webapp config appsettings set --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true --output none
+          az webapp config appsettings delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --setting-names WEBSITE_RUN_FROM_PACKAGE --output none
+          app_host=$(az webapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --query defaultHostName --output tsv)
+          echo "url=https://$app_host" >> "$GITHUB_OUTPUT"
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'CrunchWeek'
           slot-name: 'Production'
-          
+          package: deployment.zip
+
+      - name: Verify live API and React app
+        env:
+          DEPLOYED_APP_URL: ${{ steps.app.outputs.url }}
+        run: python scripts/verify_deployment.py "$DEPLOYED_APP_URL"

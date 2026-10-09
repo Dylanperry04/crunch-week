@@ -1,4 +1,25 @@
-# Optional Azure App Service deployment
+# Azure App Service deployment
+
+## Connected CrunchWeek app
+
+Azure Deployment Center added `.github/workflows/main_crunchweek.yml` for the **CrunchWeek** app in resource group **Crunchweek**. This workflow runs on `main` pushes or manually and uses the existing federated Azure login secrets. It now:
+
+- Builds React and packages its compiled assets with the Python backend and locked dependencies.
+- Sets startup to `bash azure-startup.sh` and enables remote Python builds; removes incompatible `WEBSITE_RUN_FROM_PACKAGE` configuration.
+- Uses Azure's platform-provided `WEBSITE_HOSTNAME` for host validation, preserving any custom `ALLOWED_HOSTS` values.
+- Waits for both `/api/health` and the compiled React page before reporting success.
+
+No local environment files or AI/Notion secrets are read or changed by these steps. The Azure login needs permission to update this app's configuration and deploy its code. If the workflow fails at configuration, an operator can run these equivalent commands in **Bash Cloud Shell**, then retry the workflow after granting the deployment identity the necessary App Service permissions:
+
+```bash
+az webapp config set -g Crunchweek -n CrunchWeek --startup-file 'bash azure-startup.sh' --output none
+az webapp config appsettings set -g Crunchweek -n CrunchWeek --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true --output none
+az webapp config appsettings delete -g Crunchweek -n CrunchWeek --setting-names WEBSITE_RUN_FROM_PACKAGE --output none
+```
+
+Azure's default Python welcome page means the platform is running its placeholder application. A successful upload alone does not verify the FastAPI entry point or that the React assets were built. The connected workflow now verifies both.
+
+## Optional publish-profile alternative
 
 Repository publishing and Azure deployment are separate. The `Deploy Crunch Week to Azure (manual)` workflow only runs when explicitly started from Actions on `main`. This final code review did not change Azure resources or inspect local environment files.
 
