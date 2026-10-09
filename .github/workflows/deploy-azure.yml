@@ -1,0 +1,47 @@
+name: Deploy Crunch Week to Azure (manual)
+
+# A repository upload should not also publish to the previous Azure app.
+# Configure the new repository's deployment secret and App Service first.
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: Existing Linux Python App Service name
+        required: true
+        default: CrunchWeek1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install -r requirements-dev.txt
+      - run: python -m ruff check crunch_week tests scripts
+      - run: python -m pytest
+      - run: npm ci && npm test && npm run build
+        working-directory: frontend
+      - name: Package backend and compiled React app
+        run: python scripts/package_deployment.py
+      - name: Deploy verified package
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ inputs.app_name }}
+          slot-name: Production
+          package: deployment.zip
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE || secrets.AZUREAPPSERVICE_PUBLISHPROFILE_99445021805F4168BC66EEEBF02FBA7D }}
